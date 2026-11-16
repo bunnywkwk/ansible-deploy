@@ -1,6 +1,6 @@
 # Ansible Deploy — Plan
 
-Nov 14, 2026 · @Aeron · changed Nov 15: repo server on `rhel-kvm-server` (D0)
+Nov 14, 2026 · @Aeron · changed Nov 16: repo server is a new VM `rhel9-webserver`, not `rhel-kvm-server` (D0)
 
 ## Summary
 
@@ -21,7 +21,7 @@ lab, KVM VMs stand in for both.
 ```text
 libvirt network deploy-offline (no internet; the workstation can reach it)
 
-  rhel-kvm-server (existing VM, RHEL 10)   http://192.168.150.10/
+  rhel9-webserver (new VM, RHEL 9.8)       http://192.168.150.10/
   ├── rhel9/9.8/BaseOS/  AppStream/        RHEL 9.8 DVD content
   ├── ks/                                  kickstart files
   └── releases/<version>/                  deploy bundles (Jenkins puts them here, D4)
@@ -55,7 +55,7 @@ playbook at first boot (D3). To check at work which one their kickstarts use.
 | --- | --- | --- |
 | Model | Pull: the machine runs its own playbook | Air-gapped; nothing logs in from outside |
 | Packages | RHEL 9.8 DVD content on the repo server, over HTTP; no registration | Like work: one web server, no Red Hat CDN |
-| Repo server | Existing `rhel-kvm-server`, httpd added; no new VM | Reuse; a web server only serves files, so RHEL 10 can host RHEL 9 content |
+| Repo server | New VM `rhel9-webserver` (RHEL 9.8, installed from the DVD), only on `deploy-offline`; httpd from its own DVD | Changed Nov 16: `rhel-kvm-server` will be removed. A server used only for this is air-gapped like the machines it serves |
 | Lab network | New libvirt network `deploy-offline` (no forward), `192.168.150.0/24`, DHCP `.100–.200`; repo server `.10` | Proves the install needs no internet |
 | Boot media | RHEL 9.8 **boot** ISO (already in `~/ISO`) + `inst.ks=http://…` | Packages come from the repo server; no ISO rebuild per release |
 | Bare metal in the lab | Blank KVM VM boots the ISO + kickstart | Same path as bare metal; only the boot media differs |
@@ -70,7 +70,7 @@ playbook at first boot (D3). To check at work which one their kickstarts use.
 
 | Batch | Goal | Ready when | Status |
 | --- | --- | --- | --- |
-| D0 — Repo server | `rhel-kvm-server` serves the RHEL 9.8 repos on `deploy-offline` | From the workstation, `curl http://192.168.150.10/rhel9/9.8/BaseOS/repodata/repomd.xml` works | Not started |
+| D0 — Repo server | `rhel9-webserver` serves the RHEL 9.8 repos on `deploy-offline` | From the workstation, `curl http://192.168.150.10/rhel9/9.8/BaseOS/repodata/repomd.xml` works | Not started |
 | D1 — Offline install | A blank VM installs RHEL 9 by kickstart from the repo server, no clicks, no internet | VM boots to login; `dnf repolist` shows only the repo server | Not started |
 | D2 — Playbook in `%post` | See what a playbook can and cannot do in the installer | `%post` log and a list of what failed and why | Not started |
 | D3 — First-boot service | The machine configures itself on first boot, once | Unit succeeds, `/var/lib/deploy/done` exists, a reboot does not rerun it | Not started |
@@ -82,22 +82,25 @@ playbook at first boot (D3). To check at work which one their kickstarts use.
 
 ## Before D0
 
-- [ ] Download `rhel-9.8-x86_64-dvd.iso` to `~/ISO` (needed once, to fill the repo server).
+- [ ] Download `rhel-9.8-x86_64-dvd.iso` to `~/ISO` (installs the repo server and fills it).
 - [ ] Create the GitHub repo `ansible-deploy` and push this folder.
 
 ## D0 — Repo server
 
-**Goal:** `rhel-kvm-server` serves the RHEL 9.8 DVD content, kickstarts and releases over HTTP on an isolated network.
+**Goal:** `rhel9-webserver` serves the RHEL 9.8 DVD content, kickstarts and releases over HTTP on an isolated network.
 
-- [ ] Create libvirt network `deploy-offline` (no forward, `192.168.150.1` on the workstation, DHCP `.100–.200`).
-- [ ] Add a NIC on `deploy-offline` to `rhel-kvm-server`, static `192.168.150.10`. Its other networks stay as they are.
-- [ ] Copy the 9.8 DVD ISO to the server, loop-mount it, copy its content to `/var/www/html/rhel9/9.8/`.
-- [ ] httpd installed (from the server's own repos or its attached 10.2 DVD), started, port 80 open in firewalld on
-      the `deploy-offline` interface; SELinux enforcing (content under `/var/www/html` keeps the right label).
-- [ ] Folders `ks/` and `releases/`. Done by a playbook in this repo, `repo-server.yml`.
+- [ ] Create libvirt network `deploy-offline` in Cockpit (forward mode Isolated, `192.168.150.1` on the workstation, DHCP `.100–.200`).
+- [ ] Install `rhel9-webserver` by hand from the 9.8 DVD ISO: one NIC on `deploy-offline`, static `192.168.150.10`,
+      minimal install, an admin user with my SSH key and sudo. The DVD stays attached as a CD-ROM. Not registered.
+- [ ] Set up by hand, no playbook (changed Nov 16, at my choice): the DVD is mounted read-only at
+      `/var/www/html/rhel9/9.8/` from `/etc/fstab`, not copied (saves about 11 GB). Because the ISO is read-only,
+      `restorecon` cannot relabel it; the mount sets the label instead: `context="system_u:object_r:httpd_sys_content_t:s0"`.
+- [ ] The server's own dnf uses that mount (`file://`); httpd installed, started and enabled; http open in firewalld;
+      SELinux enforcing.
+- [ ] Folders `ks/` and `releases/` under `/var/www/html/`.
 
 **Done when:** from the workstation, `curl -sI http://192.168.150.10/rhel9/9.8/BaseOS/repodata/repomd.xml` gives
-`200`; the server's existing KVM work is untouched.
+`200`; on the server, `dnf repolist` shows only its own copy.
 
 ## D1 — Offline install
 
@@ -182,7 +185,7 @@ repo server and bundle stay the same.
 ## How we work
 
 - One batch at a time; propose the steps and files first, and wait for an OK.
-- I run `virsh`/`virt-install`, changes to `rhel-kvm-server`, Jenkins and lab tests; Claude gives exact commands and
+- I run `virsh`/`virt-install`, changes to `rhel9-webserver`, Jenkins and lab tests; Claude gives exact commands and
   reviews the output.
 - No secrets in the repo. Laptop lab notes stay separate from the air-gapped Proxmox environment.
 - Known limit: the DVD content is frozen at 9.8, with no security updates (fine for the lab).
@@ -192,7 +195,6 @@ repo server and bundle stay the same.
 ```text
 ansible-deploy/
 ├── PLAN.md
-├── repo-server.yml           # D0: httpd + DVD content on rhel-kvm-server
 ├── kickstart/base.cfg        # D1
 ├── site.yml                  # the deployment's play
 ├── requirements.yml          # pinned role tags
