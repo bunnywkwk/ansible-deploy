@@ -1,0 +1,29 @@
+---
+# The deployment's play. The machine runs it on itself as root (kickstart %post or the first-boot unit),
+# so there is no become, and every role for this machine is in this one play.
+# No facts: the roles do not use them.
+
+- name: Configure this machine
+  hosts: deploy
+  gather_facts: false
+
+  tasks:
+    # Login message (/etc/motd)
+    - name: Apply the motd role
+      ansible.builtin.include_role:
+        name: motd
+        apply:
+          tags:
+            - motd
+      tags:
+        - motd
+
+    # nginx with its own page, firewalld port, service enabled and started
+    - name: Apply the webserver role
+      ansible.builtin.include_role:
+        name: webserver
+        apply:
+          tags:
+            - webserver
+      tags:
+        - webserver

@@ -58,3 +58,43 @@ install: cannot create regular file '/var/www/html/ks/base.cfg': No such file or
 **Fix:** `sudo install -d -m 0755 /var/www/html/ks /var/www/html/releases`, then publish again.
 
 **Prevent:** D0's checks now include `curl -sI http://192.168.150.10/releases/` (200).
+
+## Playbook in `%post`: "Ansible requires the locale encoding to be UTF-8; Detected None."
+
+**Error** (D2, `/root/ks-post-playbook.log` on `ks-d2`, 2026-11-16)
+
+```text
++ /opt/deploy/venv/bin/ansible-playbook playbooks/main_playbook.yml --tags motd
+ERROR: Ansible requires the locale encoding to be UTF-8; Detected None.
+```
+
+**Cause:** ansible-core (2.14 and later) refuses to start unless Python reports a UTF-8 locale. The installer runs
+`%post` with `LC_ALL=C`, which overrides everything else.
+
+**First fix tried, did not work:** `export LANG=C.UTF-8`; the second install logged `+ LANG=C.UTF-8` and the same error.
+`LANG` is the lowest-priority locale variable: `LC_ALL` overrides it. Reproduced with Python on the workstation:
+
+```text
+$ env -i LANG=C.UTF-8 python3 -c 'import locale; locale.setlocale(locale.LC_ALL, ""); print(locale.getlocale())'
+('C', 'UTF-8')
+$ env -i LANG=C.UTF-8 LC_ALL=C python3 -c 'import locale; locale.setlocale(locale.LC_ALL, ""); print(locale.getlocale())'
+(None, None)
+```
+
+Confirmed on the third install, by logging the variables at the top of `%post`:
+
+```text
++ env
++ grep -E '^(LANG|LC_)'
+LANG=en_US.UTF-8
+LC_ALL=C
+LC_NUMERIC=C
+```
+
+`LANG` was already UTF-8 (from the kickstart's `lang`); the installer's `LC_ALL=C` overrode it.
+
+**Fix:** `export LC_ALL=C.UTF-8` at the top of the `%post` that runs Ansible (`C.UTF-8` is built into glibc, so it
+exists even on a minimal install). Republish the kickstart and install the VM again.
+
+**Prevent:** any script that runs Ansible outside a login shell (kickstart `%post`, systemd unit, cron) sets
+`LC_ALL=C.UTF-8` itself, not `LANG`.

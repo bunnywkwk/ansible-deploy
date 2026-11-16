@@ -1,0 +1,4 @@
+# Ansible that runs the playbook on the target: the same pin as the role CI (ansible-pipeline/ci/requirements-tools.txt),
+# so the target runs what CI tested. RHEL 9.8's own ansible-core is 2.14.18. Shipped as wheels in the bundle,
+# installed into a Python 3.11 venv (python3.11 from the DVD).
+ansible-core==2.16.20

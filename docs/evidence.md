@@ -67,3 +67,64 @@ Notes:
 - `dnf` prints "This system is not registered…": the subscription-manager plugin; harmless, the system is not
   registered on purpose.
 - `cockpit` and `dhcpv6-client` are RHEL's default `public` zone services; the kickstart only adds `ssh`.
+
+## D2 — Playbook in `%post` (2026-11-16)
+
+Findings and the failing output: [d2-post-playbook.md](d2-post-playbook.md).
+
+## D3 — First-boot service (2026-11-16)
+
+Final version: `kickstart/d3-firstboot.cfg`, the unit runs `ansible-playbook` itself (no script). Fresh `ks-d3`.
+
+**First boot**
+
+```text
+$ sudo systemctl status deploy-firstboot --no-pager
+○ deploy-firstboot.service - Deploy: run the release playbook once
+     Loaded: loaded (/etc/systemd/system/deploy-firstboot.service; enabled; preset: disabled)
+     Active: inactive (dead) since Mon 2026-11-16 15:32:01 UTC; 54s ago
+    Process: 946 ExecStart=/opt/deploy/venv/bin/ansible-playbook playbooks/main_playbook.yml (code=exited, status=0/SUCCESS)
+    Process: 9553 ExecStartPost=/usr/bin/touch /var/lib/deploy/done (code=exited, status=0/SUCCESS)
+    Process: 9566 ExecStopPost=/bin/sh -c echo "$$(date -Is) release=$$(cat RELEASE) result=$$SERVICE_RESULT" >> /var/lib/deploy/record (code=exited, status=0/SUCCESS)
+$ sudo journalctl -u deploy-firstboot --no-pager | grep -E 'RECAP|ok=|Finished'
+Nov 16 15:32:01 ks-test ansible-playbook[946]: PLAY RECAP *********************************************************************
+Nov 16 15:32:01 ks-test ansible-playbook[946]: localhost                  : ok=9    changed=7    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0
+Nov 16 15:32:01 ks-test systemd[1]: Finished Deploy: run the release playbook once.
+$ sudo cat /var/lib/deploy/record; ls -l /var/lib/deploy/done
+2026-11-16T15:32:01+00:00 release=d3 result=success
+-rw-r--r--. 1 root root 0 Nov 16 15:32 /var/lib/deploy/done
+$ systemctl is-active nginx; sudo firewall-cmd --list-ports; curl -s localhost/webserver.html | grep Hello; cat /etc/motd
+active
+80/tcp
+  <p>Hello from the lab</p>
+Authorized users only
+$ sudo tail -5 /root/ks-post-deploy.log
+Successfully installed MarkupSafe-3.0.4 PyYAML-6.0.3 ansible-core-2.16.20 cffi-2.1.1 cryptography-50.0.2 jinja2-3.1.6 packaging-26.3 pycparser-3.12 resolvelib-1.0.1
++ cat
++ restorecon -R /opt/deploy /etc/systemd/system/deploy-firstboot.service
++ systemctl enable deploy-firstboot.service
+Created symlink /etc/systemd/system/multi-user.target.wants/deploy-firstboot.service -> /etc/systemd/system/deploy-firstboot.service.
+```
+
+**After a reboot: not run again, still one record line**
+
+```text
+$ sudo journalctl -u deploy-firstboot -b --no-pager
+Nov 16 15:33:50 ks-test systemd[1]: Deploy: run the release playbook once was skipped because of an unmet condition check (ConditionPathExists=!/var/lib/deploy/done).
+$ sudo cat /var/lib/deploy/record
+2026-11-16T15:32:01+00:00 release=d3 result=success
+```
+
+- The firewalld and nginx tasks that failed or were not reached in `%post` (D2) pass at first boot.
+- `/etc/motd` says `Authorized users only`, the default of the `v0.1.0` tag (the role's `main` has since changed it):
+  the released tag was deployed, not the latest code.
+- Failure path, not run on a VM: the same `ExecStopPost=` in a throwaway user unit on the workstation records both
+  results:
+
+  ```text
+  2026-11-16T23:23:29+08:00 release=d3 result=success
+  2026-11-16T23:23:30+08:00 release=d3 result=exit-code
+  ```
+
+- An earlier version (the unit ran a `run.sh` from the bundle) passed the same checks at 15:11 the same day; the script
+  was dropped because systemd's own settings do the same.

@@ -62,7 +62,7 @@ playbook at first boot (D3). To check at work which one their kickstarts use.
 | VM deployment | Golden image clone + the same first-boot unit (D6) | Second way, reusing the same bundle |
 | Release | Tag `v<VERSION>` on this repo; Jenkins builds `deploy-<version>.tar.gz` + checksum, publishes it to the repo server | One small versioned file per release |
 | Role versions | `requirements.yml` pins released role tags | Only CI-tested code is deployed |
-| Ansible on the machine | `ansible-core` from AppStream; collections inside the bundle | Nothing downloaded from the internet |
+| Ansible on the machine | `ansible-core` 2.16.20 (the CI pin) as wheels inside the bundle, in a `python3.11` venv; `python3.11` from AppStream; collections inside the bundle | Changed Nov 16: RHEL 9.8 only ships 2.14.18, which CI never tests; the target must run what CI tested. Nothing from the internet |
 | Jenkins | Folder `cd/`, separate from `role-ci/` | CI and CD stay apart |
 | Approval | Jenkins `input` step; the approver is me | Production waits for a click |
 
@@ -72,8 +72,8 @@ playbook at first boot (D3). To check at work which one their kickstarts use.
 | --- | --- | --- | --- |
 | D0 — Repo server | `rhel9-webserver` serves the RHEL 9.8 repos on `deploy-offline` | From the workstation, `curl http://192.168.150.10/rhel9/9.8/BaseOS/repodata/repomd.xml` works | Done (2026-11-16): `curl` 200 from the workstation; server-side `dnf repolist` reported by me, not pasted; `ks/` and `releases/` were missing, made at the start of D1 |
 | D1 — Offline install | A blank VM installs RHEL 9 by kickstart from the repo server, no clicks, no internet | VM boots to login; `dnf repolist` shows only the repo server | Done (2026-11-16), [evidence](docs/evidence.md#d1--offline-install-2026-11-16) |
-| D2 — Playbook in `%post` | See what a playbook can and cannot do in the installer | `%post` log and a list of what failed and why | Not started |
-| D3 — First-boot service | The machine configures itself on first boot, once | Unit succeeds, `/var/lib/deploy/done` exists, a reboot does not rerun it | Not started |
+| D2 — Playbook in `%post` | See what a playbook can and cannot do in the installer | `%post` log and a list of what failed and why | Done (2026-11-16): files and packages work, firewalld fails; not pursued, [findings](docs/d2-post-playbook.md) |
+| D3 — First-boot service | The machine configures itself on first boot, once | Unit succeeds, `/var/lib/deploy/done` exists, a reboot does not rerun it | Done (2026-11-16), [how it works](docs/d3-firstboot.md), [evidence](docs/evidence.md#d3--first-boot-service-2026-11-16) |
 | D4 — Release bundle | One versioned file holds everything the install needs | Jenkins builds `deploy-<version>.tar.gz` from a tag and publishes it; D3 works from it | Not started |
 | D5 — CD job | Staging → approval → production from one release | `cd/deploy` installs staging, waits for approval, installs production; deploy record per run | Not started |
 | D6 — VM deployment | Same bundle on a golden image clone | Clone boots, first-boot unit runs the same release | Not started |
@@ -122,22 +122,38 @@ working RHEL 9.
 
 **Goal:** see the installer's limits with my own eyes.
 
-- [ ] Small bundle (motd role + `playbooks/main_playbook.yml`) on the repo server; `%post` downloads it and runs
-      `ansible-playbook -c local` in the chroot.
-- [ ] Also try a task that starts a service and one that uses firewalld.
+- [x] Project files in the `sysconfig` layout: `ansible.cfg`, `requirements.yml` (motd `v0.1.0`, webserver `v0.1.1`,
+      `ansible.posix` 2.2.2), `requirements-ansible.txt`, `sysconfig/inventory.yml` (localhost, local connection),
+      `playbooks/main_playbook.yml` (one play).
+- [x] Bundle built by hand on the workstation (`build/`, not in git): roles, collections, ansible-core wheels;
+      published to `releases/d2/deploy-d2.tar.gz`.
+- [x] `kickstart/d2-post-playbook.cfg` = `base.cfg` + one `%post`: fetch the bundle, make the venv, run the playbook
+      in the chroot, once per role. The webserver role brings the service and firewalld tasks. Kept on `staging` as the record of this option (Nov 16, my choice); `main` gets only the pattern we keep.
 
-**Done when:** `/root/ks-post.log` shows what worked and what failed, with the reason, in `docs/`.
+**Done when:** `/root/ks-post-playbook.log` shows what worked and what failed, with the reason, in `docs/`.
+
+**Result:** [docs/d2-post-playbook.md](docs/d2-post-playbook.md).
 
 ## D3 — First-boot service
 
 **Goal:** the pattern to keep: `%post` downloads the bundle to `/opt/deploy` and enables `deploy-firstboot.service`;
 the first boot runs the playbook once.
 
-- [ ] Unit: one-shot, after `network-online.target`, skipped when `/var/lib/deploy/done` exists.
-- [ ] `run.sh`: `ansible-playbook playbooks/main_playbook.yml` (inventory from `ansible.cfg`, `ansible_connection: local`), then writes `done` and a deploy record
-      (version, time, result).
+- [x] `deploy-firstboot.service`, written by the kickstart `%post` (changed Nov 16: was a file in the bundle;
+      Foreman/Satellite and Red Hat's kickstarts write the unit in `%post`): one-shot, after `network-online.target`,
+      skipped when `/var/lib/deploy/done` exists; a failed run is retried at the next boot.
+- [x] The unit does everything itself, no script (changed Nov 16, at my request: a first version used `run.sh` and
+      passed; systemd's own settings do the same with less code): `Environment=LC_ALL=C.UTF-8` (lesson from D2),
+      `ExecStart=` the playbook, `ExecStartPost=` writes `done` (only on success), `ExecStopPost=` appends time,
+      release and `$SERVICE_RESULT` to `/var/lib/deploy/record`.
+- [x] `kickstart/d3-firstboot.cfg` = `base.cfg` + one `%post`: fetch the bundle (`releases/d3/deploy-d3.tar.gz`, with a
+      `RELEASE` file), make the venv from its wheels, write and enable the unit. A cloned image (D6) has no `%post`,
+      so it does the same steps in its own preparation.
 
-**Done when:** motd is configured after the first boot; the unit log is in the journal; a second reboot does not run it.
+**Done when:** motd and webserver are configured after the first boot (nginx running, port open); the unit log is in
+the journal; the record shows `result=success`; a second reboot does not run it.
+
+**Result:** [docs/d3-firstboot.md](docs/d3-firstboot.md).
 
 ## D4 — Release bundle
 
@@ -180,6 +196,8 @@ repo server and bundle stay the same.
 ## To check at work
 
 - Does their kickstart run the playbook in `%post`, at first boot, or another way?
+- I think the playbooks are stored on the FDS too (Nov 16): confirm where, how they get there (by hand, CI) and how a
+  version is chosen.
 - What is a release for them: a git tag, a bundle, a full ISO?
 - How do they get updates into the web server (newer DVD, Satellite, `reposync`)?
 - How do they know an install finished and worked?
@@ -205,7 +223,6 @@ ansible-deploy/
 │   ├── inventory.yml         # the target groups; complexity goes here, not in the play
 │   └── group_vars/           # site values per group
 ├── playbooks/main_playbook.yml  # one play per target group, roles by include_role + tags
-├── firstboot/                # deploy-firstboot.service, run.sh (D3)
 ├── Jenkinsfile               # bundle (D4), CD job (D5)
 └── docs/                     # what each batch found
 ```

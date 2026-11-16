@@ -1,0 +1,18 @@
+---
+# What a release deploys: role tags released by the role CI (~/ansible-pipeline), and the collections they need.
+# Installed into the bundle on the build host; the target machine never downloads anything from the internet.
+
+roles:
+  - name: motd
+    src: https://github.com/bunnywkwk/ansible-role-motd.git
+    scm: git
+    version: v0.1.0
+
+  - name: webserver
+    src: https://github.com/bunnywkwk/ansible-role-webserver.git
+    scm: git
+    version: v0.1.1
+
+collections:
+  - name: ansible.posix  # firewalld module (webserver role)
+    version: 2.2.2
