@@ -57,7 +57,7 @@ playbook at first boot (D3). To check at work which one their kickstarts use.
 | Packages | RHEL 9.8 DVD content on the repo server, over HTTP; no registration | Like work: one web server, no Red Hat CDN |
 | Repo server | New VM `rhel9-webserver` (RHEL 9.8, installed from the DVD), only on `deploy-offline`; httpd from its own DVD | Changed Nov 16: `rhel-kvm-server` will be removed. A server used only for this is air-gapped like the machines it serves |
 | Lab network | New libvirt network `deploy-offline` (no forward), `192.168.150.0/24`, DHCP `.100–.200`; repo server `.10` | Proves the install needs no internet |
-| Boot media | RHEL 9.8 **boot** ISO (already in `~/ISO`) + `inst.ks=http://…` | Packages come from the repo server; no ISO rebuild per release |
+| Boot media | Installer kernel and initrd from the repo server (`virt-install --location http://192.168.150.10/rhel9/9.8/`) + `inst.ks=http://…` | Changed Nov 16: the 9.8 boot ISO is gone from `~/ISO`; booting from the repo server needs no ISO and is what PXE does |
 | Bare metal in the lab | Blank KVM VM boots the ISO + kickstart | Same path as bare metal; only the boot media differs |
 | VM deployment | Golden image clone + the same first-boot unit (D6) | Second way, reusing the same bundle |
 | Release | Tag `v<VERSION>` on this repo; Jenkins builds `deploy-<version>.tar.gz` + checksum, publishes it to the repo server | One small versioned file per release |
@@ -70,8 +70,8 @@ playbook at first boot (D3). To check at work which one their kickstarts use.
 
 | Batch | Goal | Ready when | Status |
 | --- | --- | --- | --- |
-| D0 — Repo server | `rhel9-webserver` serves the RHEL 9.8 repos on `deploy-offline` | From the workstation, `curl http://192.168.150.10/rhel9/9.8/BaseOS/repodata/repomd.xml` works | Not started |
-| D1 — Offline install | A blank VM installs RHEL 9 by kickstart from the repo server, no clicks, no internet | VM boots to login; `dnf repolist` shows only the repo server | Not started |
+| D0 — Repo server | `rhel9-webserver` serves the RHEL 9.8 repos on `deploy-offline` | From the workstation, `curl http://192.168.150.10/rhel9/9.8/BaseOS/repodata/repomd.xml` works | Done (2026-11-16): `curl` 200 from the workstation; server-side `dnf repolist` reported by me, not pasted; `ks/` and `releases/` were missing, made at the start of D1 |
+| D1 — Offline install | A blank VM installs RHEL 9 by kickstart from the repo server, no clicks, no internet | VM boots to login; `dnf repolist` shows only the repo server | Done (2026-11-16), [evidence](docs/evidence.md#d1--offline-install-2026-11-16) |
 | D2 — Playbook in `%post` | See what a playbook can and cannot do in the installer | `%post` log and a list of what failed and why | Not started |
 | D3 — First-boot service | The machine configures itself on first boot, once | Unit succeeds, `/var/lib/deploy/done` exists, a reboot does not rerun it | Not started |
 | D4 — Release bundle | One versioned file holds everything the install needs | Jenkins builds `deploy-<version>.tar.gz` from a tag and publishes it; D3 works from it | Not started |
@@ -104,13 +104,16 @@ playbook at first boot (D3). To check at work which one their kickstarts use.
 
 ## D1 — Offline install
 
-**Goal:** `virt-install` boots a blank VM on `deploy-offline` from the boot ISO with my kickstart and ends with a
+**Goal:** `virt-install` boots a blank VM on `deploy-offline` from the repo server with my kickstart and ends with a
 working RHEL 9.
 
-- [ ] `kickstart/base.cfg`: `url` (BaseOS) + `repo` (AppStream) from the repo server, `text`, `@^minimal-environment`,
-      `ansible-core`, root locked, one admin user with an SSH key, SELinux enforcing, firewall on, `reboot`.
-- [ ] `%post` writes `/etc/yum.repos.d/` files pointing to the repo server (the installed system has none otherwise).
-- [ ] `virt-install --location <boot ISO> --extra-args "inst.ks=http://192.168.150.10/ks/base.cfg"`.
+- [x] `kickstart/base.cfg`, based on `~/ansible-cis/golden-images/kickstart/ks-rhel9.cfg` (UEFI, CIS LVM layout in
+      `vg_sys`, 20 GB disk): `url` (BaseOS) + `repo` (AppStream) from the repo server, `@^minimal-environment`,
+      `ansible-core`, root locked, admin `frqadmin` (locked password, sudo without one), SELinux enforcing, firewall on.
+- [x] `%post` writes `/etc/yum.repos.d/` files pointing to the repo server (the installed system has none otherwise)
+      and fetches the admin's key from `http://192.168.150.10/ks/authorized_keys`. Changed Nov 16: no key in git;
+      the repo is public and a key change needs no commit.
+- [x] `virt-install --memory 4096 --boot uefi --location http://192.168.150.10/rhel9/9.8/ --extra-args "inst.ks=http://192.168.150.10/ks/base.cfg"`.
 
 **Done when:** the VM boots to a login with no clicks; `dnf repolist` shows only the repo server;
 `getenforce` is `Enforcing`; `curl https://www.redhat.com` fails (no internet).
@@ -119,7 +122,7 @@ working RHEL 9.
 
 **Goal:** see the installer's limits with my own eyes.
 
-- [ ] Small bundle (motd role + `site.yml`) on the repo server; `%post` downloads it and runs
+- [ ] Small bundle (motd role + `playbooks/main_playbook.yml`) on the repo server; `%post` downloads it and runs
       `ansible-playbook -c local` in the chroot.
 - [ ] Also try a task that starts a service and one that uses firewalld.
 
@@ -131,7 +134,7 @@ working RHEL 9.
 the first boot runs the playbook once.
 
 - [ ] Unit: one-shot, after `network-online.target`, skipped when `/var/lib/deploy/done` exists.
-- [ ] `run.sh`: `ansible-playbook -c local -i localhost, site.yml`, then writes `done` and a deploy record
+- [ ] `run.sh`: `ansible-playbook playbooks/main_playbook.yml` (inventory from `ansible.cfg`, `ansible_connection: local`), then writes `done` and a deploy record
       (version, time, result).
 
 **Done when:** motd is configured after the first boot; the unit log is in the journal; a second reboot does not run it.
@@ -196,9 +199,12 @@ repo server and bundle stay the same.
 ansible-deploy/
 ├── PLAN.md
 ├── kickstart/base.cfg        # D1
-├── site.yml                  # the deployment's play
+├── ansible.cfg               # roles_path = roles, inventory = sysconfig/inventory.yml
 ├── requirements.yml          # pinned role tags
-├── group_vars/               # site values
+├── sysconfig/
+│   ├── inventory.yml         # the target groups; complexity goes here, not in the play
+│   └── group_vars/           # site values per group
+├── playbooks/main_playbook.yml  # one play per target group, roles by include_role + tags
 ├── firstboot/                # deploy-firstboot.service, run.sh (D3)
 ├── Jenkinsfile               # bundle (D4), CD job (D5)
 └── docs/                     # what each batch found
