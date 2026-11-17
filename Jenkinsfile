@@ -20,7 +20,6 @@ pipeline {
     ANSIBLE_FORCE_COLOR = '0'
     PY_COLORS = '0'
     NO_COLOR = '1'
-    REPO_SERVER = '192.168.150.10'
   }
 
   stages {
@@ -64,7 +63,9 @@ pipeline {
       steps {
         withCredentials([usernamePassword(credentialsId: 'github-crendentials',
                                           usernameVariable: 'GIT_USER', passwordVariable: 'GIT_TOKEN'),
-                         sshUserPrivateKey(credentialsId: 'repo-server-publish', keyFileVariable: 'KEY')]) {
+                         sshUserPrivateKey(credentialsId: 'repo-server-publish', keyFileVariable: 'KEY'),
+                         // Repo server address from Jenkins, not the repo (Jenkins masks it as **** in the log)
+                         string(credentialsId: 'repo-id', variable: 'REPO_SERVER')]) {
           sh '''
             . /opt/ci/bin/activate
             # Only a PR merge commit (two parents) was linted; a direct commit is not.

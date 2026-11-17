@@ -128,7 +128,7 @@ working RHEL 9.
 - [x] Bundle built by hand on the workstation (`build/`, not in git): roles, collections, ansible-core wheels;
       published to `releases/d2/deploy-d2.tar.gz`.
 - [x] `kickstart/d2-post-playbook.cfg` = `base.cfg` + one `%post`: fetch the bundle, make the venv, run the playbook
-      in the chroot, once per role. The webserver role brings the service and firewalld tasks. Kept on `staging` as the record of this option (Nov 16, my choice); `main` gets only the pattern we keep.
+      in the chroot, once per role. The webserver role brings the service and firewalld tasks. Kept as the record of this option (Nov 16, my choice; changed Nov 17: merged to `main` too, the docs link to it). `kickstart/deploy.cfg` is the one in use.
 
 **Done when:** `/root/ks-post-playbook.log` shows what worked and what failed, with the reason, in `docs/`.
 
