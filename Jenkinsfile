@@ -65,7 +65,7 @@ pipeline {
                                           usernameVariable: 'GIT_USER', passwordVariable: 'GIT_TOKEN'),
                          sshUserPrivateKey(credentialsId: 'repo-server-publish', keyFileVariable: 'KEY'),
                          // Repo server address from Jenkins, not the repo (Jenkins masks it as **** in the log)
-                         string(credentialsId: 'repo-id', variable: 'REPO_SERVER')]) {
+                         string(credentialsId: 'repo-ip', variable: 'REPO_SERVER')]) {
           sh '''
             . /opt/ci/bin/activate
             # Only a PR merge commit (two parents) was linted; a direct commit is not.
