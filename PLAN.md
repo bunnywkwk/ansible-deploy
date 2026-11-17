@@ -159,12 +159,26 @@ the journal; the record shows `result=success`; a second reboot does not run it.
 
 **Goal:** a release is one file, built by Jenkins from a tag of this repo and published to the repo server.
 
-- [ ] `requirements.yml` pins role tags; Jenkins installs them and the collections into the bundle.
-- [ ] Tag rule like the role CI: tag `v<VERSION>` from a merged PR only; tags cannot move.
-- [ ] Publish to `releases/<version>/` with its checksum; the kickstart checks the checksum before use.
-- [ ] Payload grows to `ansible-role-jenkins` + `ansible-role-registry`.
+A deploy release is the playbook project's version, not a role's: `v1.0.0` of this repo fixes the role tags
+(`requirements.yml`), the play, the site values (`sysconfig/`) and the ansible-core version together. Any change to
+one of them is a new release.
 
-**Done when:** an install from the published bundle works on `deploy-offline`, and the record shows the version.
+- [ ] `VERSION` (`1.0.0`), `Jenkinsfile`, `.yamllint` and `.ansible-lint` (copied from the role repos).
+- [ ] Branch or PR: Version, YAML lint, Ansible lint (`production` profile; also checks the play's syntax).
+- [ ] Merge to `main`, like the role CI: only a PR merge commit; build the bundle (roles, collections, ansible-core
+      wheels, `RELEASE` = the version), `deploy-<VERSION>.tar.gz.sha256`, publish to `releases/<VERSION>/` (upload to a
+      temporary folder, then rename; an existing folder fails the build), then tag `v<VERSION>`. An existing tag skips.
+- [ ] `kickstart/deploy.cfg` (replaces `d3-firstboot.cfg` as the kept kickstart): the release is named on the boot
+      line, `deploy.release=<VERSION>`, so D5 can send different releases to staging and production; `%post` checks
+      the checksum; `%post --erroronfail` stops the install on any error (lesson from D2).
+- [ ] Setup (me): `ansible-deploy` in the `jenkins-laptop` token (Contents write) + smee webhook; GitHub rulesets on
+      `main` and `v*` tags as in the role repos; Jenkins folder `cd/` + multibranch job `cd/ansible-deploy`; user
+      `publish` on `rhel9-webserver` owning `releases/` (key only, no sudo); its key in Jenkins as `repo-server-publish`.
+- [ ] Later: payload grows to `ansible-role-jenkins` + `ansible-role-registry`.
+
+**Done when:** merging a PR with `VERSION` `1.0.0` tags `v1.0.0` and publishes `releases/1.0.0/` (bundle and
+checksum); a second build of the same `VERSION` skips; `virt-install … deploy.release=1.0.0` installs a VM whose record
+says `release=1.0.0 result=success`.
 
 ## D5 — CD job
 
@@ -223,6 +237,7 @@ ansible-deploy/
 │   ├── inventory.yml         # the target groups; complexity goes here, not in the play
 │   └── group_vars/           # site values per group
 ├── playbooks/main_playbook.yml  # one play per target group, roles by include_role + tags
-├── Jenkinsfile               # bundle (D4), CD job (D5)
+├── VERSION                   # release version (D4)
+├── Jenkinsfile               # lint, bundle and publish (D4), CD job (D5)
 └── docs/                     # what each batch found
 ```
