@@ -1,0 +1,8 @@
+---
+# Pull model: the machine configures itself, so the only host is localhost.
+deploy:
+  hosts:
+    localhost:
+      ansible_connection: local
+      # Modules run on the system Python: dnf and SELinux bindings exist only there, not in the Ansible venv.
+      ansible_python_interpreter: /usr/bin/python3

@@ -1,0 +1,7 @@
+---
+# From ~/cicd-automation/ansible-role-registry/.ansible-lint; build/ holds downloaded roles and collections.
+profile: production
+exclude_paths:
+  - .ansible/
+  - build/
+  - docs/
